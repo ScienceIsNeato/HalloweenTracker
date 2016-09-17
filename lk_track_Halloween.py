@@ -55,10 +55,9 @@ class App:
         time.sleep(1)
         ret, frame1 = self.cam.read()
         frame_gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-
+        rand = 0
         while True:
             ret, frame2 = self.cam.read()
-            vis = frame2.copy
             frame_gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
             diff = cv2.absdiff(frame_gray1, frame_gray2)
 
@@ -73,60 +72,48 @@ class App:
             morphed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
             dialated = cv2.dilate(morphed,kernel,iterations = 5)
 
-            # Set up the SimpleBlobdetector with default parameters.
-            params = cv2.SimpleBlobDetector_Params()
-             
-            # Change thresholds
-            params.minThreshold = 0;
-            params.maxThreshold = 256;
-             
-            # Filter by Area.
-            params.filterByArea = True
-            params.minArea = 10
-             
-            # Filter by Circularity
-            params.filterByCircularity = False
-            params.minCircularity = 0.1
-             
-            # Filter by Convexity
-            params.filterByConvexity = False
-            params.minConvexity = 0.5
-             
-            # Filter by Inertia
-            params.filterByInertia =False
-            params.minInertiaRatio = 0.5
-             
-            detector = cv2.SimpleBlobDetector(params)
-         
-            # Detect blobs.
-            reversemask=255-dialated
-            keypoints = detector.detect(reversemask)
-
-            blob_x = 0
+            (_h, _w) = dialated.shape[:2]
             
-            if keypoints:
-                print "found %d blobs" % len(keypoints)
-                #if len(keypoints) > 4:
-                    # if more than four blobs, keep the four largest
-                keypoints.sort(key=(lambda s: s.size))
-                    #keypoints=keypoints[0:3]
-                point = keypoints[0].pt
-                print "point is"
-                pprint(point)
-                blob_x = int(point[0])
-                
-            else:
-                print "no blobs"
-         
-            # Draw green circles around detected blobs
-            im_with_keypoints = cv2.drawKeypoints(frame2, keypoints, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            subsample = cv2.resize(dialated, (0,0), fx=0.1, fy=0.1) 
 
-            if keypoints:
-                cv2.line(im_with_keypoints, (blob_x,0), (blob_x, 1000), (0,0,255), 14)
-                
+            (sub_h, sub_w) = subsample.shape[:2]
+
+            longest = 0
+            best_column = 0
+            longest_stretch = 0
+            tracking = False
+            j_start_tmp = 0
+            j_start = 0
+            j_end = 0
+            for j in range(0,sub_w):
+                for i in range(0,sub_h):
+                    if subsample[i,j] > 0:
+                        if tracking:
+                            longest = longest + 1
+                        else:
+                            longest = 1
+                            tracking = True
+                            j_start_tmp = i
+                    else:
+                        if tracking:
+                            if longest > longest_stretch:
+                                longest_stretch = longest
+                                best_column = j * 10
+                                j_start = j_start_tmp * 10
+                                j_end = i * 10
+                            tracking = False
+
+            if longest_stretch > 10:
+                avg_j = int((j_end - j_start)/2) + j_start
+                cv2.line(frame2, (best_column,0), (best_column + 1, 1080), (0,0,255), 20)
+                cv2.line(frame2, (best_column - avg_j,avg_j), (best_column + avg_j, avg_j), (0,0,255), 20)
+                print "longest stretch is ", longest_stretch
+                print "at column ", best_column
+            else:
+                print "..."
+            
             # open windows with original image, mask, res, and image with keypoints marked
             cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
-            cv2.namedWindow('blobs', cv2.WINDOW_NORMAL)
             cv2.namedWindow('diff', cv2.WINDOW_NORMAL)
             cv2.namedWindow('thresh', cv2.WINDOW_NORMAL)
             cv2.namedWindow('morphed', cv2.WINDOW_NORMAL)
@@ -135,66 +122,14 @@ class App:
             cv2.imshow('thresh', thresh)
             cv2.imshow('morphed', morphed)
             cv2.imshow('dialated', dialated)  
-            cv2.imshow('frame',thresh)
-            cv2.imshow('blobs', im_with_keypoints)            
+            cv2.imshow('frame', frame2) 
 
             frame_gray1 = frame_gray2
             ch = 0xFF & cv2.waitKey(1)
             if ch == 27:
                 break
             
-            #vis = frame2.copy()
-
-            if 0: #len(self.tracks) > 0:
-                img0, img1 = self.prev_gray, frame_gray1
-                p0 = np.float32([tr[-1] for tr in self.tracks]).reshape(-1, 1, 2)
-                p1, st, err = cv2.calcOpticalFlowPyrLK(img0, img1, p0, None, **lk_params)
-                p0r, st, err = cv2.calcOpticalFlowPyrLK(img1, img0, p1, None, **lk_params)
-                d = abs(p0-p0r).reshape(-1, 2).max(-1)
-                good = d < 0.1
-                new_tracks = []
-                longest = 0
-                tmpx = 0
-                tmpy = 0
-                for tr, (x, y), good_flag in zip(self.tracks, p1.reshape(-1, 2), good):
-                    if not good_flag:
-                        continue
-                    tr.append((x, y))
-                    if len(tr) > self.track_len:
-                        del tr[0]
-                    dist = math.pow(tr[0][0]-tr[len(tr)-1][0],2) + math.pow(tr[0][1]-tr[len(tr)-1][1],2)
-                    if dist < 10:
-                        continue
-                    new_tracks.append(tr)
-                    if dist > longest:
-                        tmpx = x
-                        tmpy = y
-                        longest = dist
-                    cv2.circle(vis, (x, y), 2, (0, 255, 0), -1)
-                self.tracks = new_tracks
-                cv2.polylines(vis, [np.int32(tr) for tr in self.tracks], False, (0, 255, 0))
-                cv2.circle(vis, (tmpx, tmpy), 2, (0, 0, 255), 4)
-                cv2.line(vis, (tmpx,0), (tmpx, 1000), (0,0,255))
-
-                draw_str(vis, (20, 20), 'track count: %d' % len(self.tracks))
-
-            if 0: #self.frame_idx % self.detect_interval == 0:
-                mask = np.zeros_like(frame_gray1)
-                mask[:] = 255
-                for x, y in [np.int32(tr[-1]) for tr in self.tracks]:
-                    cv2.circle(mask, (x, y), 5, 0, -1)
-                p = cv2.goodFeaturesToTrack(frame_gray1, mask = mask, **feature_params)
-                if p is not None:
-                    for x, y in np.float32(p).reshape(-1, 2):
-                        self.tracks.append([(x, y)])
-
-
-            # self.frame_idx += 1
-            # self.prev_gray = frame_gray1
-            # cv2.namedWindow("lk_track", cv2.WINDOW_NORMAL)
-            # cv2.imshow('lk_track', diff)
-
-           
+            
 
     def getLongestLine(self):
         global longest
