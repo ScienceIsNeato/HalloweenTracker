@@ -25,6 +25,7 @@ from common import anorm2, draw_str
 from time import clock
 import math
 from pprint import pprint
+import time
 
 
 lk_params = dict( winSize  = (15, 15),
@@ -42,6 +43,7 @@ class App:
         self.detect_interval = 5
         self.tracks = []
         self.cam = video.create_capture(video_src)
+        
         self.cam.set(cv2.cv.CV_CAP_PROP_FRAME_WIDTH, 1920)
         self.cam.set(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT, 1080)
         self.frame_idx = 0
@@ -50,13 +52,101 @@ class App:
 
 
     def run(self):
-        while True:
-            ret, frame = self.cam.read()
-            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            vis = frame.copy()
+        time.sleep(1)
+        ret, frame1 = self.cam.read()
+        frame_gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
 
-            if len(self.tracks) > 0:
-                img0, img1 = self.prev_gray, frame_gray
+        while True:
+            ret, frame2 = self.cam.read()
+            vis = frame2.copy
+            frame_gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+            diff = cv2.absdiff(frame_gray1, frame_gray2)
+
+            # Set threshold and maxValue
+            thresh = 0
+            maxValue = 255
+ 
+            # Basic threshold example
+            ret, thresh = cv2.threshold(diff, 25, maxValue, cv2.THRESH_BINARY);
+
+            kernel = np.ones((10,10),np.uint8)
+            morphed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            dialated = cv2.dilate(morphed,kernel,iterations = 5)
+
+            # Set up the SimpleBlobdetector with default parameters.
+            params = cv2.SimpleBlobDetector_Params()
+             
+            # Change thresholds
+            params.minThreshold = 0;
+            params.maxThreshold = 256;
+             
+            # Filter by Area.
+            params.filterByArea = True
+            params.minArea = 10
+             
+            # Filter by Circularity
+            params.filterByCircularity = False
+            params.minCircularity = 0.1
+             
+            # Filter by Convexity
+            params.filterByConvexity = False
+            params.minConvexity = 0.5
+             
+            # Filter by Inertia
+            params.filterByInertia =False
+            params.minInertiaRatio = 0.5
+             
+            detector = cv2.SimpleBlobDetector(params)
+         
+            # Detect blobs.
+            reversemask=255-dialated
+            keypoints = detector.detect(reversemask)
+
+            blob_x = 0
+            
+            if keypoints:
+                print "found %d blobs" % len(keypoints)
+                #if len(keypoints) > 4:
+                    # if more than four blobs, keep the four largest
+                keypoints.sort(key=(lambda s: s.size))
+                    #keypoints=keypoints[0:3]
+                point = keypoints[0].pt
+                print "point is"
+                pprint(point)
+                blob_x = int(point[0])
+                
+            else:
+                print "no blobs"
+         
+            # Draw green circles around detected blobs
+            im_with_keypoints = cv2.drawKeypoints(frame2, keypoints, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
+            if keypoints:
+                cv2.line(im_with_keypoints, (blob_x,0), (blob_x, 1000), (0,0,255), 14)
+                
+            # open windows with original image, mask, res, and image with keypoints marked
+            cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('blobs', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('diff', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('thresh', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('morphed', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('dialated', cv2.WINDOW_NORMAL)
+            cv2.imshow('diff', diff)
+            cv2.imshow('thresh', thresh)
+            cv2.imshow('morphed', morphed)
+            cv2.imshow('dialated', dialated)  
+            cv2.imshow('frame',thresh)
+            cv2.imshow('blobs', im_with_keypoints)            
+
+            frame_gray1 = frame_gray2
+            ch = 0xFF & cv2.waitKey(1)
+            if ch == 27:
+                break
+            
+            #vis = frame2.copy()
+
+            if 0: #len(self.tracks) > 0:
+                img0, img1 = self.prev_gray, frame_gray1
                 p0 = np.float32([tr[-1] for tr in self.tracks]).reshape(-1, 1, 2)
                 p1, st, err = cv2.calcOpticalFlowPyrLK(img0, img1, p0, None, **lk_params)
                 p0r, st, err = cv2.calcOpticalFlowPyrLK(img1, img0, p1, None, **lk_params)
@@ -88,25 +178,23 @@ class App:
 
                 draw_str(vis, (20, 20), 'track count: %d' % len(self.tracks))
 
-            if self.frame_idx % self.detect_interval == 0:
-                mask = np.zeros_like(frame_gray)
+            if 0: #self.frame_idx % self.detect_interval == 0:
+                mask = np.zeros_like(frame_gray1)
                 mask[:] = 255
                 for x, y in [np.int32(tr[-1]) for tr in self.tracks]:
                     cv2.circle(mask, (x, y), 5, 0, -1)
-                p = cv2.goodFeaturesToTrack(frame_gray, mask = mask, **feature_params)
+                p = cv2.goodFeaturesToTrack(frame_gray1, mask = mask, **feature_params)
                 if p is not None:
                     for x, y in np.float32(p).reshape(-1, 2):
                         self.tracks.append([(x, y)])
 
 
-            self.frame_idx += 1
-            self.prev_gray = frame_gray
-            cv2.namedWindow("lk_track", cv2.WINDOW_NORMAL)
-            cv2.imshow('lk_track', vis)
+            # self.frame_idx += 1
+            # self.prev_gray = frame_gray1
+            # cv2.namedWindow("lk_track", cv2.WINDOW_NORMAL)
+            # cv2.imshow('lk_track', diff)
 
-            ch = 0xFF & cv2.waitKey(1)
-            if ch == 27:
-                break
+           
 
     def getLongestLine(self):
         global longest
@@ -119,7 +207,7 @@ class App:
 def main():
     import sys
     try: video_src = sys.argv[1]
-    except: video_src = -1
+    except: video_src = -1 # set this to 0 for built in
 
     print __doc__
     App(video_src).run()
