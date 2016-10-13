@@ -162,7 +162,7 @@ class App:
 
                 # Map to position for servo (servo goes from 0 to 90, but turns too far)
                 min_servo = 10
-                max_servo = 80
+                max_servo = 150
 
                 # Use best col to map 0:1 across images to desired servo values
                 pos = min_servo + int(((best_column/10.0)/sub_w)*(max_servo-min_servo))
@@ -187,9 +187,10 @@ class App:
                 if should_record:
                     frames_recorded = frames_recorded + 1
                     # Start new video every X frames of recorded video
-                    if frames_recorded > 1000:
+                    if frames_recorded > 500:
                         frames_recorded = 0
                         out.release() # Save video
+                        del out
                         out = cv2.VideoWriter(str(time.time())+'.avi',
                                   fourcc,
                                   15.0,
@@ -229,7 +230,7 @@ class App:
 def main():
     import sys
     try: video_src = sys.argv[1]
-    except: video_src = 2 # set this to 0 for built in or -1 for a menu-based choice
+    except: video_src = -1 # set this to 0 for built in or -1 for a menu-based choice
 
     print __doc__
     App(video_src).run(video_src)
