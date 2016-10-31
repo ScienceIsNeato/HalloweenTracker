@@ -25,6 +25,8 @@ import math
 from pprint import pprint
 import serial
 import time
+import subprocess
+
 #from scipy import ndimage
 
 class App:
@@ -85,6 +87,12 @@ class App:
         except:
             arduino_enabled = 0
             print "Arduino not found on COM5."
+
+        start_time = time.time() # seed for playing halloween theme
+        clip_length = 40.0 # length of theme is X seconds
+        consec_frames = 0
+        consec_frames_needed = 50 #number of frames needed to play sound
+
 
         # Main while loop - you'll be here rest of the program
         while True:
@@ -152,7 +160,7 @@ class App:
                                 j_end = i * 10
                             tracking = False
 
-            if longest_stretch > 10*scale_factor:
+            if longest_stretch > 7*scale_factor:
                 avg_j = int((j_end - j_start)/2) + j_start # find middle of brightest area for drawing
 
                 # Draw the line
@@ -180,14 +188,23 @@ class App:
                     ser.write(str(pos) + '\n')
                     time.sleep(0.01)
                     ret = ser.read()
-                    print "and ret is "
-                    print ret
+
+                elapsed = time.time() - start_time # time since clip last played
+
+                # start clip if not played recently
+                consec_frames += 1
+                if ((elapsed > clip_length) & (pos > 85) & (pos < 105)):
+                    print elapsed
+                    print clip_length
+                    consec_frames = 0
+                    subprocess.Popen(["python", "slave.py"])
+                    start_time = time.time()
 
                 # Add frame to video output
                 if should_record:
                     frames_recorded = frames_recorded + 1
                     # Start new video every X frames of recorded video
-                    if frames_recorded > 500:
+                    if frames_recorded > 1000:
                         frames_recorded = 0
                         out.release() # Save video
                         del out
@@ -199,6 +216,7 @@ class App:
                     out.write(subsample_orig)
                 
             else:
+                consec_frames = 0
                 print "..."
             
             # open windows with original image, mask, res, and image with keypoints marked
