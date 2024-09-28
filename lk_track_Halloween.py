@@ -4,33 +4,52 @@
 Video Tracking App
 ===================
 
-Tracks random objects moving in the frame
+Tracks moving objects in the frame, controls a servo motor via Arduino, and plays spooky sounds when motion is detected.
 
 Usage
 -----
-lk_track_Halloween.py [<video_source>]
+lk_track_Halloween.py [--video_src <video_source>] [--serial_port <port>] [--debug]
+
+Arguments
+---------
+--video_src <video_source>
+    Specify the video source. It can be the camera index (e.g., '0', '1') or a video file path. Defaults to '0' if not provided.
+
+--serial_port <port>
+    Specify the serial port for the Arduino connection (e.g., 'COM3', 'COM5', '/dev/ttyUSB0'). Defaults to 'COM5' if not provided.
+
+--debug
+    Enable debug mode to display processing windows and additional output.
 
 Keys
 ----
-ESC - exit
+ESC - exit the program
+
+Description
+-----------
+This script captures video from the specified source, processes each frame to detect motion, and tracks the position of moving objects. When motion is detected:
+
+- Controls a servo motor connected to an Arduino, pointing towards the movement.
+- Plays a random spooky sound from the 'sound_clips' directory.
+- Records video clips of the motion events and saves them in the 'recordings' folder.
+
 '''
 
 import numpy as np
 import cv2
-import math
 import serial
 import time
 import subprocess
 import os
+import sys
+import argparse
+from serial.tools import list_ports
 
 class App:
-    def __init__(self, video_src, debug=1):
+    def __init__(self, video_src='0', serial_port='COM5', debug=1):
         self.video_src = video_src
+        self.serial_port = serial_port
         self.debug = debug  # Debug flag
-        self.track_len = 10
-        self.detect_interval = 5
-        self.tracks = []
-        self.frame_idx = 0
 
         # Configuration
         self.src_width = 1920  # Input source width
@@ -92,12 +111,25 @@ class App:
 
     def initialize_serial_connection(self):
         try:
-            ser = serial.Serial('COM5', 115200, timeout=0)
-            print("Arduino connected on COM5.")
+            ser = serial.Serial(self.serial_port, 115200, timeout=0)
+            print(f"Arduino connected on {self.serial_port}.")
         except serial.SerialException:
             self.arduino_enabled = False
             ser = None
-            print("Arduino not found on COM5.")
+            print(f"\nWARNING: You've run this program indicating that an Arduino should be connected on Serial Port '{self.serial_port}', but that isn't connected.")
+
+            # List available serial ports
+            available_ports = list_ports.comports()
+            if available_ports:
+                print("\nAvailable serial ports:")
+                for port in available_ports:
+                    print(f"  {port.device}")
+                print("\nYou can re-run the program with the appropriate flag to choose the correct port:")
+                print(f"  python {sys.argv[0]} --serial_port <port>")
+            else:
+                print("\nNo serial ports found.")
+
+            input("\nPress any key to continue...")
         return ser
 
     def process_frame(self, frame_gray1, ser):
@@ -210,27 +242,24 @@ class App:
     def update_tracking(self, best_column, avg_j, sub_w, frame2, ser):
         # Draw lines if debug is enabled
         if self.debug:
-            cv2.line(frame2, (best_column, 0), (best_column + 1, 1080), (0, 0, 255), 20)
+            cv2.line(frame2, (best_column, 0), (best_column + 1, frame2.shape[0]), (0, 0, 255), 20)
             cv2.line(
                 frame2,
                 (best_column - avg_j, avg_j),
                 (best_column + avg_j, avg_j),
-                (0, 0, 255),
-                20,
+                (0, 0, 255), 20,
             )
 
         # Map position for servo
         min_servo = 10
         max_servo = 150
         pos = min_servo + int(((best_column / 10.0) / sub_w) * (max_servo - min_servo))
-        print("POS:")
-        print(pos)
 
         # Rolling average
         self.pos_array.append(pos)
         self.pos_array.pop(0)
         pos = int(sum(self.pos_array) / len(self.pos_array))
-        print(pos)
+        print("Servo Position: ", pos)
 
         # Send angle to Arduino
         if self.arduino_enabled and ser is not None:
@@ -240,23 +269,34 @@ class App:
 
         elapsed = time.time() - self.start_time  # Time since last clip played
 
+        # Calculate central 10% horizontal bounds
+        frame_width = frame2.shape[1]
+        lower_bound = frame_width * 0.45
+        upper_bound = frame_width * 0.55
+
         # Play sound if conditions are met
         self.consec_frames += 1
-        if (elapsed > self.clip_length) and (85 < pos < 105):
-            print(elapsed)
-            print(self.clip_length)
+        if (elapsed > self.clip_length) and (lower_bound <= best_column <= upper_bound):
+            print(f"Elapsed Time: {elapsed:.2f} seconds")
+            print(f"Clip Length: {self.clip_length} seconds")
             self.consec_frames = 0
             subprocess.Popen(["python", "play_audio.py"])
             self.start_time = time.time()
 
+
     def record_frame(self, frame):
+        if self.out is None:
+            return
+
+        self.out.write(frame)
         self.frames_recorded += 1
+
         # Start new video every X frames of recorded video
-        if self.frames_recorded > 1000:
+        if self.frames_recorded >= 10000:
             self.frames_recorded = 0
             self.out.release()  # Save video
             self.out = None  # It will be re-initialized in process_frame
-        self.out.write(frame)
+
 
     def display_debug_windows(self, frame2, diff, thresh, morphed, dilated):
         # Helper function to convert images to BGR
@@ -283,7 +323,7 @@ class App:
 
         # Helper function to create a label bar above each image
         def create_label_bar(text, width):
-            label_height = 30  # Height of the label bar
+            label_height = 40  # Height of the label bar
             label_bar = np.full((label_height, width, 3), border_color, dtype=np.uint8)  # Grey background
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 1.5  # Increased font size for larger images
@@ -416,23 +456,24 @@ class App:
         cv2.destroyAllWindows()
 
 def main():
-    import sys
-    try:
-        video_src_arg = sys.argv[1]
-    except IndexError:
-        video_src_arg = '0'  # Default to '0' for the built-in webcam
+    parser = argparse.ArgumentParser(description='Video Tracking App')
+    parser.add_argument('--video_src', default='0', help='Video source (default: 0)')
+    parser.add_argument('--serial_port', default='COM5', help='Serial port for Arduino (default: COM5)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+
+    args = parser.parse_args()
 
     print(__doc__)
 
-    # Try to convert video_src_arg to an integer (camera index)
+    # Try to convert video_src to an integer (camera index)
     try:
-        video_src = int(video_src_arg)
+        video_src = int(args.video_src)
     except ValueError:
-        video_src = video_src_arg  # Use as is (e.g., a filename)
+        video_src = args.video_src  # Use as is (e.g., a filename)
 
-    debug = 1  # Set to 0 to disable debug mode
+    debug = 1 if args.debug else 0
 
-    app = App(video_src, debug=debug)
+    app = App(video_src=video_src, serial_port=args.serial_port, debug=debug)
     app.run()
 
 if __name__ == '__main__':
