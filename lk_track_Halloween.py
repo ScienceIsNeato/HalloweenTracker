@@ -18,12 +18,10 @@ ESC - exit
 import numpy as np
 import cv2
 import math
-from pprint import pprint
 import serial
 import time
 import subprocess
-
-# from scipy import ndimage
+import os
 
 class App:
     def __init__(self, video_src, debug=1):
@@ -37,10 +35,10 @@ class App:
         # Configuration
         self.src_width = 1920  # Input source width
         self.src_height = 1080  # Input source height
-        self.scale_factor = 1  # Initial scaling to speed up algorithm
-        self.rec_scale_factor = 1  # Scaling done to save video
+        self.scale_factor = 0.6  # Initial scaling to speed up algorithm
+        self.rec_scale_factor = 0.3  # Scaling done to save video
         self.arduino_enabled = True
-        self.should_record = True
+        self.should_record = True  # Set to True to enable recording
 
         # Initialize variables
         self.frames_recorded = 0
@@ -49,6 +47,7 @@ class App:
         self.consec_frames_needed = 50  # Number of frames needed to play sound
         self.start_time = time.time()  # Seed for playing Halloween theme
         self.clip_length = 40.0  # Length of theme in seconds
+        self.out = None  # VideoWriter object
 
     def initialize_camera(self):
         self.cam = cv2.VideoCapture(self.video_src)
@@ -69,28 +68,27 @@ class App:
         (height, width) = frame.shape[:2]
 
         # Set the ROI for what we want to throw out
-        roi_y0 = height // 2
-        roi_y1 = height
+        self.roi_y0 = height // 2
+        self.roi_y1 = height
+        self.width = width
 
         # Convert to grayscale and crop
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame_gray = frame_gray[roi_y0:roi_y1, 0:width]
+        frame_gray = frame_gray[self.roi_y0:self.roi_y1, 0:self.width]
 
-        return frame_gray, (roi_y0, roi_y1, width)
+        return frame_gray
 
-    def initialize_video_writer(self, roi_y0, roi_y1):
+    def initialize_video_writer(self, frame_width, frame_height):
+        if not os.path.exists('recordings'):
+            os.makedirs('recordings')
         # Define the codec and create VideoWriter object
-        fourcc = cv2.VideoWriter_fourcc(*'IYUV')
-        out = cv2.VideoWriter(
-            f"{time.time()}.avi",
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Use 'XVID' for better compatibility
+        self.out = cv2.VideoWriter(
+            f"recordings/{time.time()}.avi",
             fourcc,
             15.0,  # fps
-            (
-                int(self.src_width * self.rec_scale_factor),
-                int(self.src_height * self.rec_scale_factor * ((roi_y1 - roi_y0) / self.src_height)),
-            ),
+            (frame_width, frame_height),
         )
-        return out
 
     def initialize_serial_connection(self):
         try:
@@ -102,7 +100,7 @@ class App:
             print("Arduino not found on COM5.")
         return ser
 
-    def process_frame(self, frame_gray1, roi_y0, roi_y1, width, ser, out):
+    def process_frame(self, frame_gray1, ser):
         ret, frame2 = self.cam.read()
         if not ret:
             return False, frame_gray1  # End of video stream
@@ -110,14 +108,16 @@ class App:
         # Downsample the frame
         frame2 = cv2.resize(frame2, (0, 0), fx=self.scale_factor, fy=self.scale_factor)
 
-        # Crop and convert to grayscale
-        frame2 = frame2[roi_y0:roi_y1, 0:width]
+        # Crop the frame
+        frame2 = frame2[self.roi_y0:self.roi_y1, 0:self.width]
+
+        # Convert to grayscale
         frame_gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
 
-        # Further downsample if recording
+        # Further downsample for recording
         if self.should_record:
             subsample_orig = cv2.resize(
-                frame_gray2,
+                frame2,  # Use the BGR frame
                 (0, 0),
                 fx=(1 / self.scale_factor) * self.rec_scale_factor,
                 fy=(1 / self.scale_factor) * self.rec_scale_factor,
@@ -129,7 +129,9 @@ class App:
         diff = cv2.absdiff(frame_gray1, frame_gray2)
 
         # Threshold the difference image
-        ret_thresh, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+        thresh_val = 0
+        maxValue = 255
+        ret_thresh, thresh = cv2.threshold(diff, 25, maxValue, cv2.THRESH_BINARY)
 
         # Morphological operations
         kernel_size = int(8 * self.scale_factor)
@@ -146,16 +148,24 @@ class App:
 
         if best_column is not None:
             self.update_tracking(best_column, avg_j, sub_w, frame2, ser)
-            if self.should_record:
-                self.record_frame(out, subsample_orig)
         else:
             self.consec_frames = 0
             print("...")  # No significant movement detected
+
+        # Record the frame
+        if self.should_record and subsample_orig is not None:
+            if self.out is None:
+                frame_height, frame_width = subsample_orig.shape[:2]
+                frame_width = int(frame_width)
+                frame_height = int(frame_height)
+                self.initialize_video_writer(frame_width, frame_height)
+            self.record_frame(subsample_orig)
 
         # Display debug windows if enabled
         if self.debug:
             self.display_debug_windows(frame2, diff, thresh, morphed, dilated)
 
+        # Return the updated frame
         return True, frame_gray2
 
     def find_best_column(self, subsample, sub_h, sub_w):
@@ -236,18 +246,17 @@ class App:
             print(elapsed)
             print(self.clip_length)
             self.consec_frames = 0
-            subprocess.Popen(["python", "play_sound.py"])
+            subprocess.Popen(["python", "play_audio.py"])
             self.start_time = time.time()
 
-    def record_frame(self, out, subsample_orig):
+    def record_frame(self, frame):
         self.frames_recorded += 1
         # Start new video every X frames of recorded video
         if self.frames_recorded > 1000:
             self.frames_recorded = 0
-            out.release()  # Save video
-            del out
-            out = self.initialize_video_writer()
-        out.write(subsample_orig)
+            self.out.release()  # Save video
+            self.out = None  # It will be re-initialized in process_frame
+        self.out.write(frame)
 
     def display_debug_windows(self, frame2, diff, thresh, morphed, dilated):
         # Helper function to convert images to BGR
@@ -274,7 +283,7 @@ class App:
 
         # Helper function to create a label bar above each image
         def create_label_bar(text, width):
-            label_height = 40  # Height of the label bar
+            label_height = 30  # Height of the label bar
             label_bar = np.full((label_height, width, 3), border_color, dtype=np.uint8)  # Grey background
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 1.5  # Increased font size for larger images
@@ -287,7 +296,7 @@ class App:
 
         # Set the border color to grey
         border_color = [127, 127, 127]  # Grey color
-        border_size = 20  # Increased border size for better visibility
+        border_size = 10  # Increased border size for better visibility
 
         # Convert images to BGR
         frame2_bgr = to_bgr(frame2)
@@ -297,7 +306,7 @@ class App:
         dilated_bgr = to_bgr(dilated)
 
         # Resize images while keeping aspect ratio
-        max_width = 720  # Increased size (3X larger)
+        max_width = 960  # Increased size (3X larger)
         frame2_bgr = resize_with_aspect_ratio(frame2_bgr, max_width=max_width)
         diff_bgr = resize_with_aspect_ratio(diff_bgr, max_width=max_width)
         thresh_bgr = resize_with_aspect_ratio(thresh_bgr, max_width=max_width)
@@ -372,14 +381,12 @@ class App:
         # Display the combined image
         cv2.imshow('Debug Window', combined_image)
 
-
-
-    def handle_exit(self, out):
+    def handle_exit(self):
         # Terminate program when user presses ESC
         ch = cv2.waitKey(1) & 0xFF
         if ch == 27:
-            if self.should_record and self.frames_recorded > 1:
-                out.release()
+            if self.should_record and self.frames_recorded > 1 and self.out is not None:
+                self.out.release()
             return True
         return False
 
@@ -389,22 +396,24 @@ class App:
         if frame1 is None:
             return
 
-        frame_gray1, roi_params = self.preprocess_frame(frame1)
-        roi_y0, roi_y1, width = roi_params
+        frame_gray1 = self.preprocess_frame(frame1)
 
-        if self.should_record:
-            out = self.initialize_video_writer(roi_y0, roi_y1)
-        else:
-            out = None
+        self.out = None  # Initialize self.out to None
 
         ser = self.initialize_serial_connection()
 
         while True:
-            success, frame_gray1 = self.process_frame(frame_gray1, roi_y0, roi_y1, width, ser, out)
+            success, frame_gray1 = self.process_frame(frame_gray1, ser)
             if not success:
                 break
-            if self.handle_exit(out):
+            if self.handle_exit():
                 break
+
+        # Release resources
+        self.cam.release()
+        if self.out is not None:
+            self.out.release()
+        cv2.destroyAllWindows()
 
 def main():
     import sys
@@ -425,7 +434,6 @@ def main():
 
     app = App(video_src, debug=debug)
     app.run()
-    cv2.destroyAllWindows()
 
 if __name__ == '__main__':
     main()
