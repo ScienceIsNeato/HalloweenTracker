@@ -104,8 +104,6 @@ class CameraProcessor:
             self.update_tracking(best_column, avg_j, sub_w, frame2, arduino_controller)
         else:
             self.consec_frames = 0
-            if self.debug:
-                print("No significant movement detected.")
 
         # Record the frame
         if self.should_record and subsample_orig is not None:
