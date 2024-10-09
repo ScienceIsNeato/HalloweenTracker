@@ -40,6 +40,8 @@ import cv2
 import serial
 import time
 import subprocess
+import cv2
+import numpy as np
 import os
 import sys
 import argparse
@@ -103,34 +105,89 @@ class App:
         # Define the codec and create VideoWriter object
         fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Use 'XVID' for better compatibility
         self.out = cv2.VideoWriter(
-            f"recordings/{time.time()}.avi",
+            f"recordings/{int(time.time())}.avi",
             fourcc,
             15.0,  # fps
             (frame_width, frame_height),
         )
+        if not self.out.isOpened():
+            print("Failed to initialize VideoWriter.")
+            self.out = None
+        else:
+            print(f"VideoWriter initialized with frame size: ({frame_width}, {frame_height})")
 
     def initialize_serial_connection(self):
-        try:
-            ser = serial.Serial(self.serial_port, 115200, timeout=0)
-            print(f"Arduino connected on {self.serial_port}.")
-        except serial.SerialException:
-            self.arduino_enabled = False
-            ser = None
-            print(f"\nWARNING: You've run this program indicating that an Arduino should be connected on Serial Port '{self.serial_port}', but that isn't connected.")
+            try:
+                ser = serial.Serial(self.serial_port, 9600, timeout=1)
+                print(f"Arduino connected on {self.serial_port}.")
+                time.sleep(2)  # Wait for Arduino to reset
+                
+                # Handshake Process
+                self.perform_handshake(ser)
+                
+            except serial.SerialException:
+                self.arduino_enabled = False
+                ser = None
+                print(f"\nWARNING: You've run this program indicating that an Arduino should be connected on Serial Port '{self.serial_port}', but that isn't connected.")
 
-            # List available serial ports
-            available_ports = list_ports.comports()
-            if available_ports:
-                print("\nAvailable serial ports:")
-                for port in available_ports:
-                    print(f"  {port.device}")
-                print("\nYou can re-run the program with the appropriate flag to choose the correct port:")
-                print(f"  python {sys.argv[0]} --serial_port <port>")
-            else:
-                print("\nNo serial ports found.")
+                # List available serial ports
+                available_ports = list_ports.comports()
+                if available_ports:
+                    print("\nAvailable serial ports:")
+                    for port in available_ports:
+                        print(f"  {port.device}")
+                    print("\nYou can re-run the program with the appropriate flag to choose the correct port:")
+                    print(f"  python {sys.argv[0]} --serial_port <port>")
+                else:
+                    print("\nNo serial ports found.")
 
-            input("\nPress any key to continue...")
-        return ser
+                input("\nPress any key to continue...")
+            return ser
+
+    def perform_handshake(self, ser):
+        print("Starting handshake with Arduino...")
+        
+        # Send handshake initiation
+        ser.write("PYTHON_HANDSHAKE\n".encode())
+        
+        # Wait for Arduino's response
+        start_time = time.time()
+        timeout = 5  # seconds
+        while True:
+            if ser.in_waiting > 0:
+                response = ser.readline().decode().strip()
+                if response == "ARDUINO_HANDSHAKE":
+                    print("Handshake successful!")
+                    break
+                else:
+                    print(f"Unexpected response: {response}")
+            elif time.time() - start_time > timeout:
+                print("Handshake failed: Timeout waiting for Arduino response.")
+                sys.exit(1)
+            time.sleep(0.1)
+
+    def send_servo_position(self, ser, pos):
+        if not (0 <= pos <= 180):
+            print(f"Invalid position value: {pos}. Must be between 0 and 180.")
+            return
+        command = f"{pos}\n"
+        ser.flushInput()  # Clear input buffer
+        ser.write(command.encode())
+        print(f"Sent position: {pos}")
+
+        # Wait for Arduino response
+        start_time = time.time()
+        timeout = 2  # seconds
+        while True:
+            if ser.in_waiting > 0:
+                response = ser.readline().decode().strip()
+                print(f"Arduino Response: {response}")
+                break
+            elif time.time() - start_time > timeout:
+                print("No response from Arduino. Timeout.")
+                break
+            time.sleep(0.01)
+
 
     def process_frame(self, frame_gray1, ser):
         ret, frame2 = self.cam.read()
@@ -161,9 +218,9 @@ class App:
         diff = cv2.absdiff(frame_gray1, frame_gray2)
 
         # Threshold the difference image
-        thresh_val = 0
+        thresh_val = 25
         maxValue = 255
-        ret_thresh, thresh = cv2.threshold(diff, 25, maxValue, cv2.THRESH_BINARY)
+        ret_thresh, thresh = cv2.threshold(diff, thresh_val, maxValue, cv2.THRESH_BINARY)
 
         # Morphological operations
         kernel_size = int(8 * self.scale_factor)
@@ -182,7 +239,6 @@ class App:
             self.update_tracking(best_column, avg_j, sub_w, frame2, ser)
         else:
             self.consec_frames = 0
-            print("...")  # No significant movement detected
 
         # Record the frame
         if self.should_record and subsample_orig is not None:
@@ -240,6 +296,7 @@ class App:
             return None, None
 
     def update_tracking(self, best_column, avg_j, sub_w, frame2, ser):
+
         # Draw lines if debug is enabled
         if self.debug:
             cv2.line(frame2, (best_column, 0), (best_column + 1, frame2.shape[0]), (0, 0, 255), 20)
@@ -263,9 +320,7 @@ class App:
 
         # Send angle to Arduino
         if self.arduino_enabled and ser is not None:
-            ser.write((str(pos) + '\n').encode())
-            time.sleep(0.01)
-            ser.read()
+            self.send_servo_position(ser, pos)
 
         elapsed = time.time() - self.start_time  # Time since last clip played
 
@@ -283,9 +338,9 @@ class App:
             subprocess.Popen(["python", "play_audio.py"])
             self.start_time = time.time()
 
-
     def record_frame(self, frame):
         if self.out is None:
+            print("Warning: VideoWriter is not initialized. Cannot write frame.")
             return
 
         self.out.write(frame)
@@ -296,7 +351,6 @@ class App:
             self.frames_recorded = 0
             self.out.release()  # Save video
             self.out = None  # It will be re-initialized in process_frame
-
 
     def display_debug_windows(self, frame2, diff, thresh, morphed, dilated):
         # Helper function to convert images to BGR
@@ -330,7 +384,7 @@ class App:
             font_thickness = 3
             text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
             text_x = (width - text_size[0]) // 2
-            text_y = (label_height + text_size[1]) // 2 - 5  # Adjust vertical position
+            text_y = (label_height + text_size[1]) // 2
             cv2.putText(label_bar, text, (text_x, text_y), font, font_scale, (0, 0, 0), font_thickness)
             return label_bar
 
@@ -443,7 +497,11 @@ class App:
         ser = self.initialize_serial_connection()
 
         while True:
-            success, frame_gray1 = self.process_frame(frame_gray1, ser)
+            try:
+                success, frame_gray1 = self.process_frame(frame_gray1, ser)
+            except serial.SerialException as e:
+                print(f"Serial Exception: {e}")
+                break
             if not success:
                 break
             if self.handle_exit():
@@ -453,6 +511,8 @@ class App:
         self.cam.release()
         if self.out is not None:
             self.out.release()
+        if ser is not None and ser.is_open:
+            ser.close()
         cv2.destroyAllWindows()
 
 def main():
