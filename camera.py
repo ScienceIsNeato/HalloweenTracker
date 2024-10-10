@@ -207,9 +207,12 @@ class CameraProcessor:
             )
 
         # Map position for servo
-        min_servo = 5
-        max_servo = 175
+        min_servo = 0
+        max_servo = 180
         pos = min_servo + int(((best_column / 10.0) / sub_w) * (max_servo - min_servo))
+
+        # Assuming servo pointing in same direction as camera, invert the position
+        pos = max_servo - pos
 
         # Rolling average
         self.pos_array.append(pos)
