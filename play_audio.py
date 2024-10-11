@@ -1,6 +1,7 @@
 import os
 import random
 import threading
+import time  # Import time module for sleep
 from pydub import AudioSegment
 from pydub.playback import _play_with_simpleaudio
 
@@ -27,14 +28,15 @@ class SoundPlayer:
     def play_random_sound(self):
         with self.lock:
             if self.currently_playing:
-                print("A sound is already playing.")
+                print("A sound is already playing or in buffer time.")
                 return
             else:
                 self.currently_playing = True
 
         if not self.sound_files:
             print("No sound files found in the 'sound_clips' directory.")
-            self.currently_playing = False
+            with self.lock:
+                self.currently_playing = False
             return
 
         # Choose a random sound file
@@ -51,5 +53,9 @@ class SoundPlayer:
         # Use _play_with_simpleaudio to get a PlayObject
         play_obj = _play_with_simpleaudio(audio)
         play_obj.wait_done()  # Wait until playback is finished
+        # Wait for the buffer time
+        buffer_time = 30  # Buffer time in seconds
+        print(f"Buffering for {buffer_time} seconds before allowing next sound.")
+        time.sleep(buffer_time)
         with self.lock:
             self.currently_playing = False
