@@ -6,9 +6,18 @@ from utils import display_debug_windows
 from play_audio import SoundPlayer
 
 class CameraProcessor:
-    def __init__(self, video_src='0', debug=False):
+    def __init__(self, video_src='0', debug=False, camera_fov=180.0):
         self.video_src = video_src
         self.debug = debug
+        self.camera_fov = camera_fov  # Camera field of view in degrees
+
+        # Calculate servo limits based on camera FOV
+        self.min_servo = 90 - (self.camera_fov / 2)
+        self.max_servo = 90 + (self.camera_fov / 2)
+
+        # Ensure servo limits are within 0 to 180 degrees
+        self.min_servo = max(0, self.min_servo)
+        self.max_servo = min(180, self.max_servo)
 
         # Configuration
         self.src_width = 1920  # Input source width
@@ -19,11 +28,7 @@ class CameraProcessor:
 
         # Initialize variables
         self.frames_recorded = 0
-        self.pos_array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        self.consec_frames = 0
-        self.consec_frames_needed = 50  # Number of frames needed to play sound
-        self.start_time = time.time()  # Seed for playing sound clip
-        self.clip_length = 40.0  # Length between sound clips in seconds
+        self.pos_array = [90] * 10  # Start with servo centered at 90 degrees
         self.out = None  # VideoWriter object
         self.sound_player = SoundPlayer()
 
@@ -104,8 +109,6 @@ class CameraProcessor:
 
         if best_column is not None:
             self.update_tracking(best_column, avg_j, sub_w, frame2, arduino_controller)
-        else:
-            self.consec_frames = 0
 
         # Record the frame
         if self.should_record and subsample_orig is not None:
@@ -200,50 +203,49 @@ class CameraProcessor:
     def update_tracking(self, best_column, avg_j, sub_w, frame2, arduino_controller):
         # Draw lines if debug is enabled
         if self.debug:
-            cv2.line(frame2, (best_column, 0), (best_column + 1, frame2.shape[0]), (0, 0, 255), 20)
-            cv2.line(
-                frame2,
-                (best_column - avg_j, avg_j),
-                (best_column + avg_j, avg_j),
-                (0, 0, 255), 20,
-            )
+            self.draw_debug_lines(frame2, best_column, avg_j)
 
-        # Map position for servo
-        min_servo = 0
-        max_servo = 180
-        pos = min_servo + int(((best_column / 10.0) / sub_w) * (max_servo - min_servo))
+        # Get image width
+        image_width = frame2.shape[1]
 
-        # Assuming servo pointing in same direction as camera, invert the position
-        pos = max_servo - pos
+        # Calculate servo position
+        pos = self.calculate_servo_position(best_column, image_width)
 
-        # Rolling average
-        self.pos_array.append(pos)
-        self.pos_array.pop(0)
-
-        # Remove outliers
-        pos = self.remove_outliers(self.pos_array)
+        # Update position array and remove outliers
+        pos = self.update_position_array(pos)
         print("Servo Position: ", pos)
 
         # Send the position to the Arduino controller
         if arduino_controller is not None:
             arduino_controller.send_servo_position(pos)
 
-        elapsed = time.time() - self.start_time  # Time since last clip played
+        # Check and play sound if conditions are met
+        self.check_and_play_sound(best_column, image_width)
 
-        # Calculate central 10% horizontal bounds
-        frame_width = frame2.shape[1]
-        lower_bound = frame_width * 0.45
-        upper_bound = frame_width * 0.55
+    def draw_debug_lines(self, frame, best_column, avg_j):
+        cv2.line(frame, (best_column, 0), (best_column + 1, frame.shape[0]), (0, 0, 255), 20)
+        cv2.line(
+            frame,
+            (best_column - avg_j, avg_j),
+            (best_column + avg_j, avg_j),
+            (0, 0, 255), 20,
+        )
 
-        # Play sound if conditions are met
-        self.consec_frames += 1
-        if (lower_bound <= best_column <= upper_bound):
-            print(f"Elapsed Time: {elapsed:.2f} seconds")
-            print(f"Clip Length: {self.clip_length} seconds")
-            self.consec_frames = 0
-            # Use the SoundPlayer instance to play a sound
-            self.sound_player.play_random_sound()
-            self.start_time = time.time()
+    def calculate_servo_position(self, best_column, image_width):
+        # Calculate angle per pixel
+        angle_per_pixel = self.camera_fov / image_width
+
+        # Calculate angle corresponding to the detected position
+        angle = (best_column - (image_width / 2.0)) * angle_per_pixel  # Angle in degrees
+
+        # Map angle to servo position
+        pos = self.min_servo + ((angle + (self.camera_fov / 2)) / self.camera_fov) * (self.max_servo - self.min_servo)
+
+        # Ensure 'pos' is within servo limits
+        pos = max(self.min_servo, min(self.max_servo, pos))
+
+        # Convert 'pos' to integer for servo command
+        return int(pos)
 
 
     def initialize_video_writer(self, frame_width, frame_height):

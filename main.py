@@ -21,6 +21,9 @@ Arguments
 --debug
     Enable debug mode to display processing windows and additional output.
 
+--camera_fov <degrees>
+    Specify the camera's horizontal field of view in degrees. Defaults to 180.0 if not provided.
+
 Keys
 ----
 ESC - exit the program
@@ -47,6 +50,7 @@ def main():
     parser.add_argument('--video_src', default='0', help='Video source (default: 0)')
     parser.add_argument('--serial_port', default='COM5', help='Serial port for Arduino (default: COM5)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument('--camera_fov', type=float, default=180.0, help='Camera field of view in degrees (default: 180.0)')
 
     args = parser.parse_args()
 
@@ -58,10 +62,9 @@ def main():
     except ValueError:
         video_src = args.video_src  # Use as is (e.g., a filename)
 
-    debug = args.debug
-
     # Initialize camera processor
-    camera_processor = CameraProcessor(video_src=video_src, debug=debug)
+    print("Initializing camera with an fov of {} degrees...".format(args.camera_fov))
+    camera_processor = CameraProcessor(video_src=video_src, debug=args.debug, camera_fov=args.camera_fov)
 
     # Initialize Arduino controller
     arduino_controller = ArduinoController(serial_port=args.serial_port)
