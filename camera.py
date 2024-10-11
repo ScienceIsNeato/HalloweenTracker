@@ -263,6 +263,9 @@ class CameraProcessor:
         # Ensure 'pos' is within servo limits
         pos = max(self.min_servo, min(self.max_servo, pos))
 
+        # Assume camera is pointed in same direction as the servo and reverse the position
+        pos = self.max_servo - (pos - self.min_servo)
+
         # Convert 'pos' to integer for servo command
         return int(pos)
 
