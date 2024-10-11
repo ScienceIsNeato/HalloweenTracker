@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import time
 import os
-from utils import display_debug_windows, play_audio
+from utils import display_debug_windows
+from play_audio import SoundPlayer
 
 class CameraProcessor:
     def __init__(self, video_src='0', debug=False):
@@ -24,6 +25,7 @@ class CameraProcessor:
         self.start_time = time.time()  # Seed for playing sound clip
         self.clip_length = 40.0  # Length between sound clips in seconds
         self.out = None  # VideoWriter object
+        self.sound_player = SoundPlayer()
 
     def initialize_camera(self):
         self.cam = cv2.VideoCapture(self.video_src)
@@ -235,12 +237,14 @@ class CameraProcessor:
 
         # Play sound if conditions are met
         self.consec_frames += 1
-        if (elapsed > self.clip_length) and (lower_bound <= best_column <= upper_bound):
+        if (lower_bound <= best_column <= upper_bound):
             print(f"Elapsed Time: {elapsed:.2f} seconds")
             print(f"Clip Length: {self.clip_length} seconds")
             self.consec_frames = 0
-            play_audio()
+            # Use the SoundPlayer instance to play a sound
+            self.sound_player.play_random_sound()
             self.start_time = time.time()
+
 
     def initialize_video_writer(self, frame_width, frame_height):
         if not os.path.exists('recordings'):
