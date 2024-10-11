@@ -239,6 +239,16 @@ class CameraProcessor:
         # Remove outliers
         pos = self.remove_outliers(self.pos_array)
         return pos
+    
+    def check_and_play_sound(self, best_column, frame_width):
+        # Calculate central 10% horizontal bounds
+        lower_bound = frame_width * 0.45
+        upper_bound = frame_width * 0.55
+
+        # Play sound if conditions are met
+        if lower_bound <= best_column <= upper_bound:
+            # Use the SoundPlayer instance to play a sound
+            self.sound_player.play_random_sound()
 
     def calculate_servo_position(self, best_column, image_width):
         # Calculate angle per pixel
