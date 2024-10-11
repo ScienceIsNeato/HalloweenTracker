@@ -231,6 +231,15 @@ class CameraProcessor:
             (0, 0, 255), 20,
         )
 
+    def update_position_array(self, pos):
+        # Rolling average
+        self.pos_array.append(pos)
+        self.pos_array.pop(0)
+
+        # Remove outliers
+        pos = self.remove_outliers(self.pos_array)
+        return pos
+
     def calculate_servo_position(self, best_column, image_width):
         # Calculate angle per pixel
         angle_per_pixel = self.camera_fov / image_width
