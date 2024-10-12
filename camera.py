@@ -6,7 +6,7 @@ from utils import display_debug_windows
 from play_audio import SoundPlayer
 
 class CameraProcessor:
-    def __init__(self, video_src='0', debug=False, camera_fov=180.0):
+    def __init__(self, video_src='0', debug=False, camera_fov=180.0, is_upside_down=False):
         self.video_src = video_src
         self.debug = debug
         self.camera_fov = camera_fov  # Camera field of view in degrees
@@ -31,6 +31,7 @@ class CameraProcessor:
         self.pos_array = [90] * 10  # Start with servo centered at 90 degrees
         self.out = None  # VideoWriter object
         self.sound_player = SoundPlayer()
+        self.is_upside_down = is_upside_down
 
     def initialize_camera(self):
         self.cam = cv2.VideoCapture(self.video_src)
@@ -43,6 +44,9 @@ class CameraProcessor:
         if not ret:
             print("Failed to capture initial frame from camera.")
             return None
+
+        if (self.is_upside_down):
+            frame = cv2.flip(frame, -1)
         frame = cv2.resize(frame, (0, 0), fx=self.scale_factor, fy=self.scale_factor)
         return frame
 
@@ -65,6 +69,9 @@ class CameraProcessor:
         ret, frame2 = self.cam.read()
         if not ret:
             return False, frame_gray1  # End of video stream
+
+        if (self.is_upside_down):
+            frame2 = cv2.flip(frame2, -1)
 
         # Downsample the frame
         frame2 = cv2.resize(frame2, (0, 0), fx=self.scale_factor, fy=self.scale_factor)

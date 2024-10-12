@@ -24,6 +24,9 @@ Arguments
 --camera_fov <degrees>
     Specify the camera's horizontal field of view in degrees. Defaults to 180.0 if not provided.
 
+--camera_upside_down
+    Specify if the camera is mounted upside down. This will flip the camera feed vertically.
+
 Keys
 ----
 ESC - exit the program
@@ -51,6 +54,7 @@ def main():
     parser.add_argument('--serial_port', default='COM5', help='Serial port for Arduino (default: COM5)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--camera_fov', type=float, default=180.0, help='Camera field of view in degrees (default: 180.0)')
+    parser.add_argument('--camera_upside_down', action='store_true', help='Camera is mounted upside down')
 
     args = parser.parse_args()
 
@@ -64,7 +68,7 @@ def main():
 
     # Initialize camera processor
     print("Initializing camera with an fov of {} degrees...".format(args.camera_fov))
-    camera_processor = CameraProcessor(video_src=video_src, debug=args.debug, camera_fov=args.camera_fov)
+    camera_processor = CameraProcessor(video_src=video_src, debug=args.debug, camera_fov=args.camera_fov, is_upside_down=args.camera_upside_down)
 
     # Initialize Arduino controller
     arduino_controller = ArduinoController(serial_port=args.serial_port)
