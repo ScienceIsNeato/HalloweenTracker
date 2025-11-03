@@ -1,5 +1,7 @@
 numpy
 opencv-python
 pyserial
+pydub
 simpleaudio
+audioop-lts; python_version >= '3.13'
 
