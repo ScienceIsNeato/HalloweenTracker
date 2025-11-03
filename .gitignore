@@ -45,4 +45,18 @@ $RECYCLE.BIN/
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+.venv/
+
+# Project specific
 recordings/*.avi
+sound_clips.zip
+sound_clips/*.mp3
